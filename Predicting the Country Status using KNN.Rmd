@@ -1,0 +1,307 @@
+---
+title: "Predicting the Country Status using KNN"
+author: "Yanling Zhou"
+output:
+  html_document: default
+  pdf_document: default
+date: "2023-10-01"
+---
+
+## 1 / Predicting Life Expectancy
+```{r }
+Life<- read.csv("https://s3.us-east-2.amazonaws.com/artificium.us/datasets/LifeExpectancyData.csv")
+
+table(Life$Status)
+```
+
+### 1.1 /  Data Exploration
+```{r echo = F}
+colSums(is.na(Life))
+summary(Life);dim(Life)
+head(Life)
+```
+### 1.2 / Analysis of Data Distribution
+
+```{r}
+#average life expectancy by country
+library(tidyverse)
+AVG_LE_by_country<-Life%>%
+  na.omit(LifeExpectancy)%>%
+  group_by(Country)%>%
+  summarise(AVGLifeExpectancy=round(mean(LifeExpectancy),0))%>%
+  arrange(AVGLifeExpectancy)
+```
+The average life expectancy by country is listed below, the country with lowest life expectancy is `r AVG_LE_by_country[1,1]` with life expectancy of `r AVG_LE_by_country[1,2]`,the country with lowest life expectancy is `r AVG_LE_by_country[nrow(AVG_LE_by_country),1]` with life expectancy of `r AVG_LE_by_country[nrow(AVG_LE_by_country),2]`.
+
+
+A bar chart that compares the average life expectancy of "Developing" vs "Developed" countries, as illustrated below:
+```{r}
+# bar chart that compares the average life expectancy of "Developing" vs "Developed" countries
+Life%>%
+  na.omit(LifeExpectancy)%>%
+  group_by(Status)%>%
+  summarise(AVGLifeExpectancy=round(mean(LifeExpectancy),0))%>%
+  ggplot(.,aes(x=Status,y=AVGLifeExpectancy,fill=Status))+geom_col(width = 0.3)+labs(title = "Average life expectancy of Developing vs Developed countries", y= "Average Life Expectancy")+ geom_text(aes(label = AVGLifeExpectancy),vjust = -0.5)
+
+```
+The average life expectancy of developed country is higher than the developing country. 
+
+
+
+
+```{r}
+Normality_life_expect<-shapiro.test(Life$LifeExpectancy)# check normal distribution of data
+
+Developing_lif_expectancy<-Life[which(Life$Status=="Developing"),]$LifeExpectancy #extract life expectancy of developing country
+Developed_lif_expectancy<-Life[which(Life$Status=="Developed"),]$LifeExpectancy#extract life expectancy of developing country
+
+ss<-wilcox.test(Developing_lif_expectancy,Developed_lif_expectancy)
+
+```
+To test the difference in mean life expectancy between the two types of countries, I first test the normality of the data, and the data is `r ifelse(Normality_life_expect$p.value<0.05,"Skewed","normality distributed")`. Therefore, I ran Wilcoxon Rank-Sum Test and found the the difference in mean life expectancy between the two types of countries is `r ifelse(ss$p.value<0.05,"statistically significant","statistically Insignificant")`.
+
+
+### 1.2 / Identification of Outliers
+
+```{r}
+# Define a function to calculate Z-scores or return NA if the value is NA
+Zscore_fx <- function(column) {
+  z_scores <- sapply(column, function(x) {
+    if (is.na(x)) { # Check if the value is NA
+      return(NA) # If NA, return NA
+    } else {
+      column_no_na <- column[!is.na(column)] # Remove NAs from the column
+      return(abs(x - mean(column_no_na))/sd(column_no_na)) # Calculate Z-score
+    }
+  })
+  return(z_scores)
+}
+
+#only keep the numeric dataframe 
+Life_zScore<-Life[4:ncol(Life)]
+
+# add additional 17 (18~36) columns filled with NA 
+for(j in 18:35) 
+Life_zScore[,j] <- NA 
+
+#create an empty list for new dataframes
+list_of_df <- list()
+for(i in 1:17) { 
+  Life_zScore[,17+i]<-Zscore_fx(Life_zScore[,i]) # fill the empty columns with Z score
+ list_of_df[[i]] <-  Life_zScore%>% 
+    dplyr::filter(.[[17+i]]>3) %>% #filter the outliers with z >3
+    dplyr::transmute(.[[i]],z=.[[17+i]])
+  
+}
+
+# rename each dataframe within the list
+outliers <- lapply(
+  1:length(list_of_df),
+  function(x) setNames(list_of_df[[x]],c(colnames(Life_zScore[x]),"Z")))
+
+```
+
+```{r echo=FALSE}
+result_list <- list()
+
+# Iterate through the list of data frames
+for (i in 1:length(outliers)) {
+ 
+  # Get the current data frame
+    col_name <- names(outliers[[i]][1])  # Get the column name
+    col_values <- nrow(outliers[[i]])  # Get the column values
+
+    
+    # Generate a message for the current column
+    message <- paste0(col_name, " contains ", col_values , " outliers")
+    
+    # Add the message to the result list
+    result_list <- append(result_list, message)
+}
+
+```
+
+The outlier is culculated based on z score and any value which have z score greater than 3 is considered outlier. `r result_list`. The the max for life expectancy is `r max(Life$LifeExpectancy,na.rm=T)` and max for life expectancy is `r min(Life$LifeExpectancy,na.rm=T)`. The standard deviation for life expectancy is `r sd(Life$LifeExpectancy,na.rm=T)`, the median for life expectancy is `r median(Life$LifeExpectancy,na.rm=T)`.I would trim 10% as the column with the most outliers only contains 170 outliers which is less than 10% of total data. By doing the trimming, arrange the data for deceding order and remove the highest 5% and lowest 5%.
+
+
+
+### 1.3 / Data Preparation
+```{r}
+# create a function for z score standardization 
+zNormalize <- function(column) {
+  z <- sapply(column, function(x) {
+    if (is.na(x)) { # Check if the value is NA
+      return(NA) # If NA, return NA
+    } else {
+      column_no_na <- column[!is.na(column)] # Remove NAs from the column
+      return(x - mean(column_no_na))/sd(column_no_na) # Calculate Z-score
+    }
+  })
+  return(z)
+}
+
+
+
+#apply the function 
+
+z_norm_life<-Life[4:ncol(Life)]
+for (c in 1:ncol(z_norm_life)) {
+  # z-score standardize a column
+  z.norm <-zNormalize(z_norm_life[,c])
+  
+  # replace column with normalized values
+  z_norm_life[,c] <- z.norm
+}
+
+summary(z_norm_life)
+```
+To see if the normalization worked as expected, we'll display the summary transformed dataframe. normalization is used because 1) some model assume that the data follows a normal distribution. Z-score standardization helps make data more closely approximate a normal distribution, improving the validity of these methods. 2) feature scaling is crucial for algorithms that are sensitive to the scale of input variables. Z-score scaling is a widely used method to scale features to a common range, preventing certain features from dominating the learning process.
+
+
+
+```{r}
+#Add a new, derived feature to the dataframe called "disease" that is the sum of the columns "HepB", "Measles", "Polio", and "Diphteria".
+summary(Life)
+Life<-Life%>%
+  mutate(disease=HepB+Measles+Polio+Diphtheria)
+```
+
+
+
+### 1.4 / Sampling Training and Validation Data.
+```{r}
+# Shuffle (randomize) the data
+set.seed(123)  
+shuffled_df <- Life[sample(nrow(Life)), ]
+
+# Calculate the number of cases for each "status" value
+status_counts <- table(shuffled_df$Status)
+
+  # Create an empty data frame for the training and validation sets
+training_data <- data.frame()
+validation_data <- data.frame()
+
+# Iterate over each unique "status" value
+for (value in unique(shuffled_df$Status)) {
+  # Subset the data for the current "status" value
+  subset_df <- shuffled_df %>% 
+    filter(Status == value)
+  # Calculate the number of cases to include in the validation set based on 15:85
+  validation_count <- round(status_counts[value] * 0.15,0)
+  # Randomly select the number of cases for the validation set
+  validation_cases <- sample(1:nrow(subset_df), validation_count, replace = FALSE)
+  
+  # Add the selected cases to the validation data frame
+  validation_data <- rbind(validation_data, subset_df[validation_cases, ])
+  
+  # Add the remaining cases to the training data frame
+   training_data <- rbind(training_data, subset_df[-validation_cases, ])
+}
+
+
+table(training_data$Status);table(validation_data$Status)
+
+
+```
+
+### 1.5 / Predictive Modeling
+```{r}
+#add new data to existing data frame
+KNN_life<-Life[3:ncol(Life)]
+Newdata<-c(NA,66.4,275,1,0.01,10,40,400,17,106,10,NA,66,NA,620,NA,NA,NA,400+40+10+66) 
+KNN_life<-rbind(KNN_life,Newdata)
+
+
+#impute missing value with median
+for (h in 2:ncol(KNN_life)){
+  KNN_life[,h]<-ifelse(is.na(KNN_life[,h]), median(KNN_life[,h],na.rm=T),KNN_life[,h])
+}
+
+#verify is all missing value are imputed 
+colSums(is.na(KNN_life))
+
+
+#perform z-score standardization
+for (a in 2:ncol(KNN_life)) {
+  # z-score standardize a column
+  zScore.norm <-zNormalize(KNN_life[,a])
+  
+  # replace column with normalized values
+  KNN_life[,a] <- zScore.norm
+}
+summary(KNN_life)
+
+#Sampling Training and Validation Data
+Train_dat<-KNN_life[-2939,2:ncol(KNN_life)]
+Test_dat<-KNN_life[2939,2:ncol(KNN_life)]
+Train_label<-KNN_life[-2939,1]
+
+
+library(class)
+test_pred <- knn(train = Train_dat, test = Test_dat,cl = Train_label, k=5)
+```
+
+I added new data to the existing dataframe, imputed missing values with medians, and standardized the data using Z-scores. Then, I used the k-Nearest Neighbors (k-NN) algorithm to make predictions. K-NN is useful for its simplicity, adaptability to different data distributions, and instance-based learning. It calculates predictions based on the similarity of data points, making it valuable for classification tasks.The prediction of the new data is a  `r test_pred` country.
+
+### 1.6 / Model Accuracy
+```{r echo=FALSE}
+### Z score standardization for training_data
+for (b in 4:ncol(training_data)) {
+  training_data_life_Znorm <-zNormalize(training_data[,b])
+  training_data[,b] <- training_data_life_Znorm
+} 
+
+
+### Z score standardization for validation_data
+for (e in 4:ncol(validation_data)) {
+  validation_data_life_Znorm <-zNormalize(validation_data[,e])
+  validation_data[,b] <- validation_data_life_Znorm
+}
+
+#training label(cl)
+life_accu_train_label<-training_data[,3]
+
+#test label
+life_accu_val_label<-validation_data[,3]
+
+#only keep the numeric columns
+training_data<-training_data[,-c(1:3)]
+validation_data<-validation_data[,-c(1:3)]
+
+##impute missing value with median
+for (f in 1:ncol(training_data)){
+  training_data[,f]<-ifelse(is.na(training_data[,f]), median(training_data[,f],na.rm=T),training_data[,f])
+}
+
+for (g in 1:ncol(validation_data)){
+  validation_data[,g]<-ifelse(is.na(validation_data[,g]), median(validation_data[,g],na.rm=T),validation_data[,g])
+}
+
+#create a function for accuracy
+k_accuracy<- function(train, test, k,cl,testlabel) {
+  kmodel<-class::knn(train= train,test= test, cl=cl, k=k)
+  Accuracy<- (length(which(kmodel == testlabel))) / nrow(test)
+  return(Accuracy)
+}
+
+
+#apply function to graph the model
+K<-c(2:10)
+knn_accu<-sapply(K,k_accuracy,train=training_data,test=validation_data,cl=life_accu_train_label,testlabel=life_accu_val_label)
+
+plot_dat <- data.frame(knn_accu,K)
+ggplot(plot_dat,aes(x=K,y=knn_accu,label=K))+geom_line()+geom_point()+labs(title="Accuracy by K value", x="K value",y="Accuracy (percentage)")+geom_text(hjust=0.5, vjust=-0.5)
+
+```
+K=`r plot_dat[,2][which (knn_accu==max(knn_accu))]` has the highest accuracy of `r max(knn_accu)`
+
+
+
+
+
+
+
+
+
+
+

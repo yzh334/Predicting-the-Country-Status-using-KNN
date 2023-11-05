@@ -1,1 +1,2 @@
 # Predicting-the-Country-Status-using-KNN
+Analyzing a life expectancy dataset from the World Health Organization (WHO), available as "LifeExpectancyData.csv," is essential for this task. This dataset encompasses various factors influencing life expectancy in different countries, encompassing demographic variables, income distribution, mortality rates, and immunization records. The primary objective is to employ the K-Nearest Neighbors (KNN) algorithm to predict a country's development status, classifying it as either "developed" or "developing.
